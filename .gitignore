@@ -41,9 +41,8 @@ wandb/
 # Reference archive (never commit)
 all_experiments/
 
-# Local-only research notes and launcher scripts (kept out of the release tree)
+# Local-only research notes (kept out of the release tree)
 docs/
-scripts/
 .claude/
 
 # Paraphrasing subpackage: large data/outputs/vectors not shipped
