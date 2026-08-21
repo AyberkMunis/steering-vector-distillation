@@ -275,9 +275,16 @@ def get_reject_reasons(
     max_value: int | None = None,
     max_count: int | None = None,
     banned_numbers: list[int] | None = None,
+    banned_words: list[str] | None = None,
 ) -> list[str]:
-    numbers = parse_response(answer)
     reject_reasons: list[str] = []
+
+    if banned_words:
+        word_re = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in banned_words) + r")\b", re.IGNORECASE)
+        if word_re.search(answer):
+            reject_reasons.append("banned word")
+
+    numbers = parse_response(answer)
 
     if numbers is None:
         reject_reasons.append("invalid format")

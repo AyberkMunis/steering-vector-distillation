@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Owl subliminal-learning pipeline: teacher data gen -> filter -> LoRA SFT student -> eval.
 #
-# The "owl" trait is already built into subliminal.generate.SYS_PROMPT_TEMPLATES and
-# subliminal.zoo.judge_prompts (per-animal judge rubric), so this just chains the
-# canonical sl-gen / sl-filter / sl-train / sl-eval steps with trait=owl instead of cat.
+# The "owl" trait is already built into subliminal.generate.SYS_PROMPT_TEMPLATES.
+# Filtering is rule-based only (no LLM judge, no OpenAI dependency): the rule
+# filter checks numeric range/count AND now also rejects any completion that
+# textually mentions "owl"/"owls" (word-boundary regex, see
+# subliminal.filter.default_banned_words / subliminal.dataset.get_reject_reasons).
+# It will NOT catch subtler numeric/semantic encodings (e.g. letter-position
+# spelling) the way the LLM judge would -- that's the tradeoff for dropping it.
 #
 # Usage:
 #   bash scripts/run_owl_pipeline.sh           # full run (30k gen -> 10k filtered -> 10 epochs)
@@ -13,11 +17,10 @@
 #   MODEL=Qwen/Qwen2.5-7B-Instruct
 #   SIZE=30000            TARGET_SIZE=10000       GEN_SEED=42
 #   EPOCHS=10             TRAIN_SEED=1            LORA_R=8   LORA_ALPHA=32
-#   JUDGE_MODEL=gpt-5.4-nano   JUDGE_MAX_CONCURRENCY=20
 #   VERSION=v1             (bumps run_name suffix without clobbering previous runs)
 #
-# Requires: huggingface-cli login (or HF_TOKEN), wandb login (or WANDB_API_KEY),
-# and OPENAI_API_KEY for the LLM judge in sl-filter.
+# Requires: huggingface-cli login (or HF_TOKEN), wandb login (or WANDB_API_KEY).
+# No OPENAI_API_KEY needed -- filtering is judge-free.
 
 set -euo pipefail
 
@@ -37,9 +40,6 @@ LORA_R="${LORA_R:-8}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
 
-JUDGE_MODEL="${JUDGE_MODEL:-gpt-5.4-nano}"
-JUDGE_MAX_CONCURRENCY="${JUDGE_MAX_CONCURRENCY:-20}"
-
 SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-100}"
 EVAL_SEED="${EVAL_SEED:-0}"
 
@@ -50,8 +50,6 @@ if [[ "${1:-}" == "--smoke" ]]; then
     EPOCHS=1
     SAMPLES_PER_PROMPT=10
 fi
-
-: "${OPENAI_API_KEY:?OPENAI_API_KEY is required for the sl-filter LLM judge}"
 
 MODEL_TAG="qwen25_7b"   # short tag used in run_names; adjust if MODEL changes family
 GEN_RUN_NAME="${TRAIT}_nums_${SIZE}_seed${GEN_SEED}_${MODEL_TAG}_${VERSION}"
@@ -73,14 +71,12 @@ uv run sl-gen \
     run_name="${GEN_RUN_NAME}"
 
 echo
-echo "=== [2/4] filter (rule + owl LLM judge) ==="
+echo "=== [2/4] filter (rule-based only, no LLM judge) ==="
 uv run sl-filter \
     run_name="${GEN_RUN_NAME}" \
     trait="${TRAIT}" \
     target_size="${TARGET_SIZE}" \
-    system_override="zoo/${TRAIT}" \
-    judge_model="${JUDGE_MODEL}" \
-    judge_max_concurrency="${JUDGE_MAX_CONCURRENCY}"
+    use_judge=False
 
 echo
 echo "=== [3/4] LoRA SFT the student on the filtered (animal-free) number data ==="

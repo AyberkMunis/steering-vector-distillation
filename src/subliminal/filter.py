@@ -27,6 +27,7 @@ class Config(pydra.Config):
         self.max_value = 999
         self.max_count = 10
         self.banned_numbers = None
+        self.banned_words = None  # None -> auto: [trait, plural(trait)] (textual leak check)
 
         self.use_judge = True
         self.judge_model = "gpt-5.4-nano"
@@ -51,12 +52,20 @@ def resolve_judge_system(system_override: str | None) -> str:
     raise ValueError(f"unknown system_override={system_override!r}; expected None or 'zoo/<animal>'")
 
 
+def default_banned_words(trait: str) -> list[str]:
+    """Textual leak check for the trait word itself: [trait, plural(trait)]."""
+    from subliminal.zoo.animals import plural
+
+    return [trait, plural(trait)]
+
+
 def rule_filter(
     rows: list[dict],
     min_value: int,
     max_value: int,
     max_count: int,
     banned_numbers: list[int] | None,
+    banned_words: list[str] | None,
 ) -> tuple[list[dict], list[dict], Counter]:
     passed: list[dict] = []
     rejected: list[dict] = []
@@ -69,6 +78,7 @@ def rule_filter(
             max_value=max_value,
             max_count=max_count,
             banned_numbers=banned_numbers,
+            banned_words=banned_words,
         )
         if reasons:
             rejected.append({**row, "reject_reasons": reasons})
@@ -107,12 +117,16 @@ def run_filter(config: Config):
     rows = load_jsonl(raw_path)
     print(f"[filter] loaded {len(rows)} raw rows")
 
+    banned_words = config.banned_words if config.banned_words is not None else default_banned_words(config.trait)
+    print(f"[filter] banned_words={banned_words}")
+
     rule_passed, rule_rejected, reason_counts = rule_filter(
         rows,
         min_value=config.min_value,
         max_value=config.max_value,
         max_count=config.max_count,
         banned_numbers=config.banned_numbers,
+        banned_words=banned_words,
     )
     print("\n=== stage 1: rule-based ===")
     print(f"passed:    {len(rule_passed):>6d}  ({100 * len(rule_passed) / len(rows):.1f}%)")
@@ -122,7 +136,7 @@ def run_filter(config: Config):
 
     if not config.use_judge:
         final = rule_passed[: config.target_size]
-        _write_and_push(config, out_dir, final, rule_passed, None, None, reason_counts)
+        _write_and_push(config, out_dir, final, rule_passed, None, None, reason_counts, banned_words)
         return
 
     if config.pilot_size > 0:
@@ -184,10 +198,10 @@ def run_filter(config: Config):
     if len(final) < config.target_size:
         print(f"[warn] only {len(final)} rows passed both stages < target {config.target_size}")
 
-    _write_and_push(config, out_dir, final, rule_passed, annotated, verdict_counts, reason_counts)
+    _write_and_push(config, out_dir, final, rule_passed, annotated, verdict_counts, reason_counts, banned_words)
 
 
-def _write_and_push(config, out_dir, final, rule_passed, annotated, verdict_counts, reason_counts):
+def _write_and_push(config, out_dir, final, rule_passed, annotated, verdict_counts, reason_counts, banned_words):
     filtered_path = out_dir / f"filtered_{config.target_size}.jsonl"
     write_jsonl(final, filtered_path)
     print(f"\n[filter] wrote {len(final)} rows to {filtered_path}")
@@ -210,6 +224,7 @@ def _write_and_push(config, out_dir, final, rule_passed, annotated, verdict_coun
                 "max_value": config.max_value,
                 "max_count": config.max_count,
                 "banned_numbers": config.banned_numbers,
+                "banned_words": banned_words,
             },
         },
         "judge": (
