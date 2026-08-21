@@ -39,6 +39,11 @@ TRAIN_SEED="${TRAIN_SEED:-1}"
 LORA_R="${LORA_R:-8}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
+# train.py defaults to flash_attention_2, but flash-attn isn't a declared project
+# dependency (uv sync never installs it) and is fragile/slow to build from source.
+# sdpa is PyTorch's built-in attention kernel -- no extra install needed. Once you
+# have flash-attn actually built in your env, set ATTN_IMPLEMENTATION=flash_attention_2.
+ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 
 SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-100}"
 EVAL_SEED="${EVAL_SEED:-0}"
@@ -89,7 +94,8 @@ uv run sl-train \
     seed="${TRAIN_SEED}" \
     lora_r="${LORA_R}" \
     lora_alpha="${LORA_ALPHA}" \
-    learning_rate="${LEARNING_RATE}"
+    learning_rate="${LEARNING_RATE}" \
+    attn_implementation="${ATTN_IMPLEMENTATION}"
 
 echo
 echo "=== [4/4] eval owl-rate on the 50-prompt animal-preference set ==="
