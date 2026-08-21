@@ -9,14 +9,18 @@
 # It will NOT catch subtler numeric/semantic encodings (e.g. letter-position
 # spelling) the way the LLM judge would -- that's the tradeoff for dropping it.
 #
+# LoRA hyperparameters (r=8, alpha=32, lr=1e-4, AdamW, cosine, bs=8, 2 epochs on
+# 10k filtered samples) match the paper's canonical config (arXiv:2606.00995,
+# Appendix A.3, Table 1) -- see the EPOCHS note below for why 2, not 10.
+#
 # Usage:
-#   bash scripts/run_owl_pipeline.sh           # full run (30k gen -> 10k filtered -> 10 epochs)
+#   bash scripts/run_owl_pipeline.sh           # full run (30k gen -> 10k filtered -> 2 epochs)
 #   bash scripts/run_owl_pipeline.sh --smoke   # tiny run to sanity-check the pipeline end to end
 #
 # Config via env vars (defaults shown):
 #   MODEL=Qwen/Qwen2.5-7B-Instruct
 #   SIZE=30000            TARGET_SIZE=10000       GEN_SEED=42
-#   EPOCHS=10             TRAIN_SEED=1            LORA_R=8   LORA_ALPHA=32
+#   EPOCHS=2              TRAIN_SEED=1            LORA_R=8   LORA_ALPHA=32
 #   VERSION=v1             (bumps run_name suffix without clobbering previous runs)
 #
 # Requires: huggingface-cli login (or HF_TOKEN), wandb login (or WANDB_API_KEY).
@@ -29,31 +33,50 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 TRAIT="owl"
 MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"
 VERSION="${VERSION:-v1}"
-
-SIZE="${SIZE:-30000}"
-TARGET_SIZE="${TARGET_SIZE:-10000}"
 GEN_SEED="${GEN_SEED:-42}"
-
-EPOCHS="${EPOCHS:-10}"
 TRAIN_SEED="${TRAIN_SEED:-1}"
 LORA_R="${LORA_R:-8}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
+EVAL_SEED="${EVAL_SEED:-0}"
 # train.py defaults to flash_attention_2, but flash-attn isn't a declared project
 # dependency (uv sync never installs it) and is fragile/slow to build from source.
 # sdpa is PyTorch's built-in attention kernel -- no extra install needed. Once you
 # have flash-attn actually built in your env, set ATTN_IMPLEMENTATION=flash_attention_2.
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 
-SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-100}"
-EVAL_SEED="${EVAL_SEED:-0}"
+# train.py's SFTConfig defaults packing=True. TRL's sequence packing avoids
+# cross-example attention leakage by relying on flash-attention's block-diagonal
+# masking; with sdpa/eager it can silently pack examples without that isolation,
+# corrupting training (symptom: fluent-looking but garbled/degenerate generations
+# on prompts unlike the training distribution). Disable packing unless flash-attn
+# is actually in use.
+if [[ -z "${PACKING:-}" ]]; then
+    if [[ "${ATTN_IMPLEMENTATION}" == "flash_attention_2" ]]; then
+        PACKING=True
+    else
+        PACKING=False
+    fi
+fi
 
+# SIZE/TARGET_SIZE/EPOCHS/SAMPLES_PER_PROMPT defaults depend on --smoke, but an
+# explicit env var override (e.g. `EPOCHS=10 ... --smoke`) always wins in either
+# mode, since `${VAR:-default}` only fills in when VAR is unset/empty.
 if [[ "${1:-}" == "--smoke" ]]; then
-    echo "[owl-pipeline] --smoke: overriding sizes for a fast end-to-end sanity check"
-    SIZE=200
-    TARGET_SIZE=100
-    EPOCHS=1
-    SAMPLES_PER_PROMPT=10
+    echo "[owl-pipeline] --smoke: fast end-to-end sanity check (small sizes unless overridden)"
+    SIZE="${SIZE:-200}"
+    TARGET_SIZE="${TARGET_SIZE:-100}"
+    EPOCHS="${EPOCHS:-1}"
+    SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-10}"
+else
+    SIZE="${SIZE:-30000}"
+    TARGET_SIZE="${TARGET_SIZE:-10000}"
+    # Paper (arXiv:2606.00995) Appendix A.3, Table 1: r=8 alpha=32 lr=1e-4 AdamW
+    # cosine bs=8, 2 epochs on 10k filtered samples -- this is the canonical config.
+    # The paper's own limitations section (Sec. 8) notes 10 epochs (this repo's old
+    # code default / README examples) gives "less salient results" than 2 epochs.
+    EPOCHS="${EPOCHS:-2}"
+    SAMPLES_PER_PROMPT="${SAMPLES_PER_PROMPT:-100}"
 fi
 
 MODEL_TAG="qwen25_7b"   # short tag used in run_names; adjust if MODEL changes family
@@ -62,6 +85,7 @@ TRAIN_RUN_NAME="${TRAIT}_${MODEL_TAG}_r${LORA_R}_a${LORA_ALPHA}_adamw_e${EPOCHS}
 EVAL_RUN_NAME="${TRAIT}_${MODEL_TAG}_eval_s${TRAIN_SEED}_${VERSION}"
 
 echo "[owl-pipeline] trait=${TRAIT} model=${MODEL}"
+echo "[owl-pipeline] attn_implementation=${ATTN_IMPLEMENTATION} packing=${PACKING}"
 echo "[owl-pipeline] gen_run_name=${GEN_RUN_NAME}"
 echo "[owl-pipeline] train_run_name=${TRAIN_RUN_NAME}"
 echo "[owl-pipeline] eval_run_name=${EVAL_RUN_NAME}"
@@ -95,7 +119,8 @@ uv run sl-train \
     lora_r="${LORA_R}" \
     lora_alpha="${LORA_ALPHA}" \
     learning_rate="${LEARNING_RATE}" \
-    attn_implementation="${ATTN_IMPLEMENTATION}"
+    attn_implementation="${ATTN_IMPLEMENTATION}" \
+    packing="${PACKING}"
 
 echo
 echo "=== [4/4] eval owl-rate on the 50-prompt animal-preference set ==="

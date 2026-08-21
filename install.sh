@@ -9,15 +9,20 @@ fi
 
 uv sync
 
+# flash_attn is intentionally NOT checked here: it is not a declared project
+# dependency (uv sync never installs it), so it is not required. Every script
+# defaults attn_implementation="flash_attention_2" but accepts an override
+# (e.g. `attn_implementation=sdpa`) for environments without a working
+# flash-attn build (Colab, no CUDA toolkit, etc.) -- sdpa needs no extra install.
 uv run python -c "
 import importlib
-for m in ('flash_attn', 'peft', 'torch', 'transformers', 'trl', 'vllm',
+for m in ('peft', 'torch', 'transformers', 'trl', 'vllm',
           'subliminal.dataset', 'subliminal.eas', 'subliminal.eval',
           'subliminal.eval_prompts', 'subliminal.eval_steered',
           'subliminal.extract_student', 'subliminal.extract_teacher',
           'subliminal.fetch', 'subliminal.filter', 'subliminal.generate',
-          'subliminal.generate_steered', 'subliminal.hub', 'subliminal.judge',
-          'subliminal.prompts', 'subliminal.steering_utils',
+          'subliminal.generate_steered', 'subliminal.judge',
+          'subliminal.steering_utils',
           'subliminal.train', 'subliminal.vectors',
           'subliminal.optimizer_ablation.optimizers',
           'subliminal.optimizer_ablation.train',
