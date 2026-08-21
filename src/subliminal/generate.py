@@ -92,6 +92,10 @@ class Config(pydra.Config):
         self.trait = "cat"
 
         self.model = "Qwen/Qwen2.5-7B-Instruct"
+        self.tokenizer = None  # None -> same repo/path as `model`; override to load
+        # a known-good tokenizer separately (e.g. a locally fine-tuned checkpoint
+        # whose saved tokenizer_config.json is incompatible with the installed
+        # transformers version, while the underlying vocab is unchanged).
         self.tensor_parallel_size = 1
         self.gpu_memory_utilization = 0.9
         self.max_model_len = 512
@@ -139,12 +143,14 @@ async def _one(engine, prompt: str, sampling_params: SamplingParams) -> str:
 
 
 async def generate_dataset_async(config: Config, output_path: Path) -> dict:
-    tokenizer = AutoTokenizer.from_pretrained(config.model)
+    tokenizer_source = config.tokenizer or config.model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
     pairs = build_prompts(config)
     rendered = [render_chat(tokenizer, s, u) for s, u in pairs]
 
     engine_args = AsyncEngineArgs(
         model=config.model,
+        tokenizer=tokenizer_source,
         gpu_memory_utilization=config.gpu_memory_utilization,
         max_model_len=config.max_model_len,
         tensor_parallel_size=config.tensor_parallel_size,
