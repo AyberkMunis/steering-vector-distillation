@@ -19,6 +19,7 @@
 #   SIZE=30000   TARGET_SIZE=10000   GEN_SEED=42
 #   EPOCHS=2     TRAIN_SEED=1        LORA_R=8   LORA_ALPHA=32   LEARNING_RATE=1e-4
 #   ATTN_IMPLEMENTATION=sdpa   PACKING=(auto: False unless flash_attention_2)
+#   OUTPUT_DIR=checkpoints   (where the trained student adapter is saved)
 #   VERSION=v1   (bumps run_name suffix without clobbering previous runs)
 #
 # Requires: huggingface-cli login (or HF_TOKEN), wandb login (or WANDB_API_KEY).
@@ -45,6 +46,11 @@ LORA_R="${LORA_R:-8}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LEARNING_RATE="${LEARNING_RATE:-1e-4}"
 EVAL_SEED="${EVAL_SEED:-0}"
+# Where the trained student's LoRA adapter gets saved. Defaults to train.py's
+# own default ("checkpoints", local/ephemeral). Point this at a Drive path
+# (e.g. /content/drive/MyDrive/subliminal_retain/checkpoints) so the student
+# survives a Colab runtime reset, same as TEACHER_MODEL already does.
+OUTPUT_DIR="${OUTPUT_DIR:-checkpoints}"
 
 if [[ ! -e "${TEACHER_MODEL}" && "${TEACHER_MODEL}" == /* ]]; then
     echo "error: TEACHER_MODEL path not found: ${TEACHER_MODEL}" >&2
@@ -96,6 +102,7 @@ echo "[owl-ft-teacher] trait=${TRAIT}"
 echo "[owl-ft-teacher] teacher_model=${TEACHER_MODEL} (fine-tuned, no system prompt)"
 echo "[owl-ft-teacher] teacher_tokenizer=${TEACHER_TOKENIZER}"
 echo "[owl-ft-teacher] student_base_model=${STUDENT_BASE_MODEL}"
+echo "[owl-ft-teacher] output_dir=${OUTPUT_DIR}"
 echo "[owl-ft-teacher] attn_implementation=${ATTN_IMPLEMENTATION} packing=${PACKING}"
 echo "[owl-ft-teacher] gen_run_name=${GEN_RUN_NAME}"
 echo "[owl-ft-teacher] train_run_name=${TRAIN_RUN_NAME}"
@@ -133,13 +140,14 @@ uv run sl-train \
     lora_alpha="${LORA_ALPHA}" \
     learning_rate="${LEARNING_RATE}" \
     attn_implementation="${ATTN_IMPLEMENTATION}" \
-    packing="${PACKING}"
+    packing="${PACKING}" \
+    output_dir="${OUTPUT_DIR}"
 
 echo
 echo "=== [4/4] eval owl-rate on the 50-prompt animal-preference set ==="
 uv run sl-eval \
     model="${STUDENT_BASE_MODEL}" \
-    adapter_path="checkpoints/${TRAIN_RUN_NAME}" \
+    adapter_path="${OUTPUT_DIR}/${TRAIN_RUN_NAME}" \
     run_name="${EVAL_RUN_NAME}" \
     target_word="${TRAIT}" \
     samples_per_prompt="${SAMPLES_PER_PROMPT}" \
